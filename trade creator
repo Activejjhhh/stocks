@@ -1,0 +1,99 @@
+import numpy as np
+import yfinance as yf
+import pandas as pd
+features = ['Price', 'Signal', 'Stop_Loss', 'Take_Profit', 'Open', 'High', 'Low', 'Close', 'Volume', 'Good_Breakout_Trade']
+
+
+data = yf.download('TSLA', start='2010-12-30', end='2023-03-07')
+
+def calculate_support_resistance(data, left, right):
+    hih = data['High'].rolling(window=left+right+1).max().shift(-left)
+    lol = data['Low'].rolling(window=left+right+1).min().shift(-left)
+    sup = lol.rolling(window=right*2+1).min()
+    res = hih.rolling(window=right*2+1).max()
+    return sup, res
+
+def define_stop_take(data, sup, res):
+    sl = data['Close'] - (res - sup)
+    tp = data['Close'] + (res - sup) / 2
+    return sl, tp
+
+def find_pivot_high_low(data, left, right):
+    ph = data['High'].rolling(window=left*2+1).max()
+    pl = data['Low'].rolling(window=left*2+1).min()
+    hih = ((ph == data['High']) & (ph.shift(left) != ph) & (ph.shift(-left) != ph))
+    lol = ((pl == data['Low']) & (pl.shift(left) != pl) & (pl.shift(-left) != pl))
+    return hih, lol
+
+left = 10
+right = 10
+sup, res = calculate_support_resistance(data, left, right)
+
+sl, tp = define_stop_take(data, sup, res)
+
+
+hih, lol = find_pivot_high_low(data, left, right)
+
+
+trades = []
+signals = []
+stop_losses = []
+take_profits = []
+
+
+for i in range(len(data)):
+
+    if hih[i]:
+        signal = 'Buy'
+        stop_loss = sl[i]
+        take_profit = tp[i]
+    elif lol[i]:
+        signal = 'Sell'
+        stop_loss = sl[i]
+        take_profit = tp[i]
+    else:
+        signal = ''
+        stop_loss = data['Close'][i] * 0.99  
+        take_profit = data['Close'][i] * 1.01  
+    
+
+    signals.append(signal)
+    stop_losses.append(stop_loss)
+    take_profits.append(take_profit)
+
+    if signal == 'Buy' and (take_profit - data['Close'][i]) > (data['Close'][i] - stop_loss):
+        good_trade = True
+    elif signal == 'Sell' and (data['Close'][i] - take_profit) > (stop_loss - data['Close'][i]):
+        good_trade = True
+    else:
+        good_trade = False
+
+    trades.append({
+        'Price': data['Close'][i],
+        'Signal': signal,
+        'Stop_Loss': stop_loss,
+        'Take_Profit': take_profit,
+        'Open': data['Open'][i],
+        'High': data['High'][i],
+        'Low': data['Low'][i],
+        'Close': data['Close'][i],
+        'Volume': data['Volume'][i],
+        'Good_Breakout_Trade': good_trade
+    })
+
+
+df_trades = pd.DataFrame(trades)
+
+
+if df_trades['Signal'].iloc[0] == 'Buy':
+    df_trades['Good_Breakout_Trade'] = np.where(df_trades['Take_Profit'] > df_trades['Price'], True, False)
+else:
+    df_trades['Good_Breakout_Trade'] = np.where(df_trades['Take_Profit'] < df_trades['Price'], True, False)
+
+
+trades_df = pd.DataFrame(trades, columns=features)
+
+trades_df.to_csv('trades.csv', index=False)
+
+
+print(trades_df.head(5))
